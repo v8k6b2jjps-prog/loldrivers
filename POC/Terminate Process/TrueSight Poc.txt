@@ -1,0 +1,3 @@
+Static analysis of this sample shows that IOCTL 0x22E044 reads a PID, 
+opens that process with PROCESS_TERMINATE, 
+and calls ZwTerminateProcess.
