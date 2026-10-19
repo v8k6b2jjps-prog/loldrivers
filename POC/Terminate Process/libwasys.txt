@@ -1,0 +1,8 @@
+OPSWAT's libwasys.sys (OESIS V4 Helper Driver) exposes process termination through IOCTL 0x22E00C on \\.\WasysControl. 
+Jehad Abudagga's KillerLand research publishes a proof of concept that submits a four-byte target PID and reports termination of protected AV/EDR processes. 
+Static analysis of versions 10.3.85.0 and 10.3.2951.0 confirms that this IOCTL resolves the supplied PID with PsLookupProcessByProcessId, 
+opens the process with ObOpenObjectByPointer using KernelMode, assigns it to a job object, and calls ZwTerminateJobObject. 
+The device security descriptor grants generic-all access to built-in users. 
+The shared README identifies version 10.3.85.0 by SHA256, while the bundled binary is version 10.3.2951.0; 
+both samples contain the termination path. 
+Protected-process termination is reported by the researcher and was not independently reproduced here.

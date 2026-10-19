@@ -1,0 +1,6 @@
+HONOR's MonProcessControl.sys version 1.0.0.1 exposes process termination through IOCTL 0x22400C on \\.\MonProcessControl. 
+Jehad Abudagga's KillerLand research publishes a proof of concept that submits a four-byte target PID and reports termination of protected AV/EDR processes. 
+Static analysis confirms that the handler opens the supplied PID with ZwOpenProcess using a kernel handle and calls ZwTerminateProcess. 
+The driver restricts device access to administrators and SYSTEM and checks that the calling process's image path ends with \HONOR\MagicAnimation\MagicSpaceTurbo.exe. 
+The published proof of concept copies itself to that path before opening the device, satisfying this path-based check. 
+Protected-process termination is reported by the researcher and was not independently reproduced here.
